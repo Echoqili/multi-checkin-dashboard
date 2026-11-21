@@ -1,5 +1,7 @@
 # 多平台自动签到看板
 
+仓库地址：https://github.com/Echoqili/multi-checkin-dashboard
+
 一个跑在服务器上的、带 Web 看板的多平台每日自动签到工具。当前支持 **WorkBuddy / Trae Work / Qoder / MiniMax Code / CodeArts(华为)** 五个平台，提供：
 
 - **Web 看板**：邮箱验证码登录（带发信限流）+ 应急 PIN 兜底，可视化查看各平台积分/签到状态
@@ -47,8 +49,8 @@ multi-checkin-dashboard/
 ├── scripts/                    # 本机运行：导出/续期凭据
 │   ├── 01_extract.py           # Qoder 凭据导出
 │   ├── export_creds.js         # Trae 凭据导出
-│   ├── server-checkin.js       # Trae 服务器签到（参考）
-│   ├── signin_server.py        # WorkBuddy 服务器签到（参考）
+│   ├── server-checkin.js       # Trae 单平台签到脚本（独立参考实现）
+│   ├── signin_server.py        # WorkBuddy 单平台签到脚本（独立参考实现）
 │   ├── renew_workbuddy_token.bat
 │   ├── renew_minimax_token.py
 │   ├── renew_codearts_token.py
@@ -57,10 +59,32 @@ multi-checkin-dashboard/
 │   ├── config.example.json     # 服务器连接参数
 │   ├── mail_config.example.json# SMTP 邮箱配置
 │   └── vault.example.json      # 凭据库结构说明
+├── skill/                      # WorkBuddy Skill（AI 引导式部署/运维）
+│   └── SKILL.md
 ├── deploy.sh                   # 服务器端一键部署
 ├── nginx-checkin.conf.example  # nginx 反代示例
+├── LICENSE                     # MIT
 └── README.md
 ```
+
+> 注：CodeArts 的 Node 签名脚本只保留 `dashboard/codearts.js` 一份（服务端实际调用它）；`server-checkin.js` / `signin_server.py` 是单平台的独立参考实现，与 dashboard 内逻辑等价但可脱离看板单独使用。
+
+---
+
+## 用 WorkBuddy Skill 一键引导部署（推荐）
+
+本项目自带一个 WorkBuddy Skill（`skill/SKILL.md`），装好后直接对 AI 说"帮我部署自动签到看板"即可按标准流程引导完成，无需手动逐步操作。
+
+安装方式：把 `skill/` 目录复制到你的用户级 skills 目录并改名为 `multi-platform-checkin-dashboard`：
+
+```bash
+# Windows
+copy /E skill\* "%USERPROFILE%\.workbuddy\skills\multi-platform-checkin-dashboard\"
+# macOS / Linux
+cp -r skill ~/.workbuddy/skills/multi-platform-checkin-dashboard
+```
+
+Skill 内含完整脚本副本，安装后即可用。触发词：搭建自动签到 / 部署签到看板 / 给看板添加账号 / 续期签到凭据。
 
 ---
 
