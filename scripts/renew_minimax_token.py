@@ -2,12 +2,18 @@
 # -*- coding: utf-8 -*-
 """MiniMax token 续期（本机 Windows 运行）：
 从本机 MiniMax Code 客户端的 auth.json 读取最新 OAuth 凭据，
-推送到服务器更新 vault.json 里的 minimax 账号，并试跑签到验证。
+推送到服务器更新 vault.json 里的指定 minimax 账号，并做只读 status 验证。
 
 使用场景：看板显示 MiniMax“查询失败/认证失败”时运行一次。
 通常需要先在 MiniMax Code 客户端重新登录，让 auth.json 刷新。
+
+多账号用法（客户端同一时间只保存一个登录态，切号登录后各跑一次）：
+  python renew_minimax_token.py                              # 更新 minimax_1（主号）
+  python renew_minimax_token.py --id minimax_2 --name 9527   # 追加/更新第二个号
+
+注意：只按 id 替换或追加，绝不整体覆盖整个 minimax 数组，因此不会冲掉其他号。
 """
-import json, os, sys, time, subprocess
+import json, os, sys, time, subprocess, argparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # 连接参数从同目录 config.json 读取（见 examples/config.example.json），也可用环境变量覆盖
@@ -31,6 +37,11 @@ AUTH = os.path.expanduser(r"~/.minimax/auth/prod/cn/mcode-public/auth.json")
 SSH = ["ssh", "-i", PEM, "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=20", SERVER]
 
 def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--id", default="minimax_1", help="vault 里的账号 id（默认 minimax_1）")
+    ap.add_argument("--name", default="", help="账号显示名（默认沿用或按 id 生成）")
+    args = ap.parse_args()
+
     if not os.path.exists(AUTH):
         print("找不到 MiniMax 凭据文件：", AUTH); return 1
     d = json.load(open(AUTH, encoding="utf-8"))
@@ -42,8 +53,8 @@ def main():
         print("auth.json 里没有 accessToken，请先在 MiniMax Code 客户端登录"); return 1
 
     mm = {
-        "id": "minimax_1",
-        "name": "MiniMax 主号",
+        "id": args.id,
+        "name": args.name or ("MiniMax 主号" if args.id == "minimax_1" else args.id),
         "enabled": True,
         "accessToken": rec["accessToken"],
         "refreshToken": rec.get("refreshToken", ""),
@@ -61,23 +72,33 @@ def main():
     if r.returncode != 0:
         print("上传失败"); return 1
 
-    print("[2/3] 更新服务器 vault.json ...")
+    print("[2/3] 更新服务器 vault.json（按 id 合并，不影响其他账号）...")
     code = (
         "cd ~/checkin/dashboard && python3 -c \""
-        "import json,os,time;"
+        "import json,os;"
         "v=json.load(open('vault.json',encoding='utf-8'));"
         "mm=json.load(open('minimax_account.json',encoding='utf-8'));"
-        "v['platforms']['minimax']=[mm];"
+        "lst=v['platforms'].setdefault('minimax',[]);"
+        "idx=next((i for i,a in enumerate(lst) if a.get('id')==mm['id']),None);"
+        "(lst.__setitem__(idx,mm) if idx is not None else lst.append(mm));"
         "t='vault.json.tmp';json.dump(v,open(t,'w',encoding='utf-8'),ensure_ascii=False,indent=2);"
         "os.chmod(t,0o600);os.replace(t,'vault.json');"
-        "print('vault 已更新')\""
+        "print('vault 已更新，当前 minimax 账号:',[(a.get('id'),a.get('name'),a.get('enabled')) for a in lst])\""
     )
     r = subprocess.run(SSH + [code])
     if r.returncode != 0:
         print("更新 vault 失败"); return 1
 
-    print("[3/3] 试跑签到验证 ...")
-    subprocess.run(SSH + ["cd ~/checkin/dashboard && env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy python3 cron_checkin.py minimax"])
+    print("[3/3] 只读 status 验证（不消费 refresh_token）...")
+    verify = (
+        "cd ~/checkin/dashboard && env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy "
+        "python3 -c \""
+        "import server as S;"
+        "v=S.read_vault();"
+        "a=next(x for x in v['platforms']['minimax'] if x.get('id')=='" + args.id + "');"
+        "print(S.mm_status(a))\""
+    )
+    subprocess.run(SSH + [verify])
     os.remove(tmp)
     print("\n完成。MiniMax 通常会自动续期；此脚本用于客户端重登后手动同步。")
     return 0
