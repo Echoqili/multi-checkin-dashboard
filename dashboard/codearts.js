@@ -52,7 +52,14 @@ async function refresh(acc) {
   const text = await r.text();
   let d = {};
   try { d = JSON.parse(text); } catch {}
-  if (!r.ok || !d.credentials) throw new Error(`refresh 失败 HTTP ${r.status}: ${(d.error_code || d.error || text).toString().slice(0, 120)}`);
+  if (!r.ok || !d.credentials) {
+    const detail = (d.error_code || d.error || text).toString().slice(0, 80);
+    // STS5.1806 / invalid_grant：refresh_token 已失效（一次性或被消费），必须本机客户端重登后重新导出
+    const hint = /1806|invalid_grant|invalid refresh/i.test(detail)
+      ? '；refresh_token 已失效，请在本机 CodeArts Agent 重新登录后运行 renew_codearts_token.py 同步凭据'
+      : '';
+    throw new Error(`refresh 失败 HTTP ${r.status}: ${detail}${hint}`);
+  }
   const c = d.credentials;
   return Object.assign({}, acc, {
     accessKey: c.access_key_id || acc.accessKey,
