@@ -197,6 +197,7 @@
     </div>
     <div class="hd-actions">
       <div class="user-chip"><span class="avatar" id="avatar">U</span><span id="userLabel">—</span></div>
+      <button class="icon-btn" id="checkinAllBtn" onclick="doCheckinAll()">全部签到</button>
       <button class="icon-btn" onclick="load()"><svg><use href="#i-refresh"/></svg>刷新</button>
       <button class="icon-btn" id="logoutBtn"><svg><use href="#i-out"/></svg>退出</button>
     </div>
@@ -245,7 +246,7 @@ const STATUS={ok:{label:'今日已签',cls:'b-ok'},wait:{label:'待领取',cls:'
 let SCHEMA={},DATA=null,curModalPlatform=null,curEditId=null;
 const $=id=>document.getElementById(id);
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2300);}
+function toast(m,ms){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),ms||2300);}
 function stClass(a){return a.ok?(a.checked_in?'ok':'wait'):'warn';}
 function metric(l,v,u){const isTxt=!u&&typeof v==='string'&&v!=='—';return `<div class="metric"><div class="lbl">${esc(l)}</div><div class="val${isTxt?' txt':''}">${v??'—'}${u?`<span>${esc(u)}</span>`:''}</div></div>`;}
 function curAcct(p){return (p.accounts||[]).find(x=>x._sel)||(p.accounts||[]).find(x=>x.enabled)||(p.accounts||[])[0];}
@@ -297,7 +298,6 @@ async function pinLogin(){
 }
 function enterApp(){
   $('loginView').style.display='none';$('appView').style.display='block';
-  $('serverHost').textContent=location.host||'本机';
   if(!Object.keys(SCHEMA).length){api('/api/account-schema').then(d=>{if(d&&d.platforms)SCHEMA=d.platforms;}).catch(()=>{});}
   load();
 }
@@ -352,7 +352,7 @@ function platformCard(p){
   </div>`;
 }
 function selectAcct(key,id){const p=DATA.platforms.find(x=>x.key===key);p.accounts.forEach(a=>a._sel=(a.id===id));render();}
-function render(){if(!DATA)return;$('updated').textContent=DATA.updated||'—';renderSummary();$('grid').innerHTML=DATA.platforms.map(platformCard).join('');}
+function render(){if(!DATA)return;$('serverHost').textContent=location.host||'本机';$('updated').textContent=DATA.updated||'—';renderSummary();$('grid').innerHTML=DATA.platforms.map(platformCard).join('');}
 async function load(){
   const r=$('refresh');r.innerHTML='<span class="spin">⟳</span> 刷新中';
   try{DATA=await api('/api/status?t='+Date.now());render();r.textContent='已刷新';}
@@ -362,6 +362,19 @@ async function doCheckin(pk,id){
   toast('正在签到…');
   try{const d=await api('/api/checkin',{method:'POST',body:JSON.stringify({platform:pk,id})});toast((d.ok?'成功：':'失败：')+d.note);setTimeout(load,800);}
   catch(e){if(e.message!=='未登录')toast('签到出错');}
+}
+async function doCheckinAll(){
+  const btn=$('checkinAllBtn');const old=btn.textContent;
+  btn.disabled=true;btn.textContent='签到中…';toast('正在批量签到，稍等…');
+  try{
+    const d=await api('/api/checkin-all',{method:'POST',body:JSON.stringify({})});
+    const fail=(d.results||[]).filter(r=>!r.ok);
+    let msg='批量完成：'+d.done+'/'+d.total+' 成功';
+    if(fail.length)msg+='（失败：'+fail.map(r=>r.label+'-'+r.name).join('、')+'）';
+    toast(msg,5200);
+    setTimeout(load,600);
+  }catch(e){if(e.message!=='未登录')toast('批量签到出错');}
+  finally{btn.disabled=false;btn.textContent=old;}
 }
 async function toggleAcct(pk,id,en){await api('/api/accounts/toggle',{method:'POST',body:JSON.stringify({platform:pk,id,enabled:en})});toast(en?'已启用':'已停用');load();}
 async function removeAcct(pk,id){if(!confirm('确认删除这个账号？'))return;await api('/api/accounts/remove',{method:'POST',body:JSON.stringify({platform:pk,id})});toast('已删除');load();}

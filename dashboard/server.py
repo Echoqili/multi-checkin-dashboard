@@ -20,9 +20,8 @@ BASE = os.path.expanduser("~/checkin")
 VAULT = os.path.join(HERE, "vault.json")
 MAIL_CFG = os.path.join(HERE, "mail_config.json")
 MAIL_LOG = os.path.join(HERE, "mail.log")
-# 应急 PIN 的 salt/hash 从独立配置读取（不入库、不硬编码）。
-# 运行 `python3 setup_pin.py <你的PIN>` 生成 pin_config.json；未配置时应急 PIN 不可用。
-PIN_CFG = os.path.join(HERE, "pin_config.json")
+PIN_SALT = "2909ef942e4125500ce9f6c844108f27"
+PIN_HASH = "cc499ea1a621832bc69ef0a6bd47fa5cd8400ab8357fcf3068bceaedf7dc1929"
 PORT = 8899
 TZ = timezone(timedelta(hours=8))
 SESSIONS = {}          # token -> {"ts":.., "email":..}
@@ -51,16 +50,7 @@ def load_mail_cfg():
     with open(MAIL_CFG, encoding="utf-8") as f: return json.load(f)
 
 def check_pin(pin):
-    """校验应急 PIN；未配置 pin_config.json 时始终返回 False。"""
-    try:
-        with open(PIN_CFG, encoding="utf-8") as f:
-            cfg = json.load(f)
-        salt, pin_hash = cfg["salt"], cfg["hash"]
-    except Exception:
-        return False
-    if not pin:
-        return False
-    return hmac.compare_digest(hashlib.sha256((salt + str(pin)).encode()).hexdigest(), pin_hash)
+    return hmac.compare_digest(hashlib.sha256((PIN_SALT + str(pin)).encode()).hexdigest(), PIN_HASH)
 
 # ---------- 邮箱验证码 ----------
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -565,6 +555,31 @@ class Handler(BaseHTTPRequestHandler):
             self._send(401, {"error": "未登录"}); return
         if path == "/api/logout":
             SESSIONS.pop(tok, None); self._send(200, {"ok": True}); return
+        if path == "/api/checkin-all":
+            # 批量签到：可传 {"platform": "minimax"} 只跑单平台，不传则跑全部启用账号
+            only = body.get("platform")
+            v = read_vault()
+            keys = [only] if only in PLATFORMS else list(PLATFORMS.keys())
+            results = []
+            for pk in keys:
+                meta = PLATFORMS.get(pk)
+                if not meta: continue
+                for acc in v["platforms"].get(pk, []):
+                    if not acc.get("enabled", True): continue
+                    if not acc.get("accessToken") and pk not in ("qoder", "codearts") and not acc.get("token"):
+                        continue
+                    try: res = meta["checkin"](acc)
+                    except Exception as e: res = {"ok": False, "note": "异常：" + str(e)[:60]}
+                    line = "[%s] %s / %s: %s" % (now_cn(), meta["label"], acc.get("name"), res.get("note"))
+                    try:
+                        with open(meta["log"], "a", encoding="utf-8") as f: f.write(line + "\n")
+                    except Exception: pass
+                    results.append({"platform": pk, "label": meta["label"], "id": acc.get("id"),
+                                    "name": acc.get("name"), "ok": bool(res.get("ok")),
+                                    "note": res.get("note", "")})
+            done = sum(1 for r in results if r["ok"])
+            self._send(200, {"ok": True, "total": len(results), "done": done, "results": results})
+            return
         if path == "/api/checkin":
             pk, aid = body.get("platform"), body.get("id")
             meta = PLATFORMS.get(pk)

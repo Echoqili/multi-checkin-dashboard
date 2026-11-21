@@ -30,7 +30,29 @@ function storageCandidates(){
   for(const r of roots)for(const n of names)out.push(path.join(r,n,"User","globalStorage","storage.json"));
   return out.filter(p=>fs.existsSync(p)).sort((a,b)=>fs.statSync(b).mtimeMs-fs.statSync(a).mtimeMs);
 }
-const p=storageCandidates()[0];
+// 用法：node export_creds.js [--client "Trae CN"] [--out creds.json] [--list]
+// 多账号时用 --client 指定客户端目录名，避免总导出"最近修改"的那个号。
+const argv=process.argv.slice(2);
+function argOf(name){const i=argv.indexOf(name);return i>=0?argv[i+1]:null;}
+if(argv.includes("--list")){
+  const all=[];
+  for(const n of ["Trae CN","TRAE SOLO CN","Trae","TRAE SOLO"]){
+    const p=path.join(process.env.APPDATA||path.join(require("os").homedir(),"AppData","Roaming"),n,"User","globalStorage","storage.json");
+    if(fs.existsSync(p))all.push(n+"  (改于 "+fs.statSync(p).mtime.toLocaleString()+")");
+  }
+  console.log(all.length?all.join("\n"):"未找到任何 Trae storage.json");
+  process.exit(0);
+}
+let p=null;
+const wantClient=argOf("--client");
+if(wantClient){
+  const base=process.env.APPDATA||path.join(require("os").homedir(),"AppData","Roaming");
+  const cand=path.join(base,wantClient,"User","globalStorage","storage.json");
+  if(!fs.existsSync(cand)){console.error("找不到客户端 "+wantClient+" 的 storage.json："+cand);process.exit(1);}
+  p=cand;
+}else{
+  p=storageCandidates()[0];
+}
 if(!p){console.error("未找到 Trae storage.json");process.exit(1);}
 const s=JSON.parse(fs.readFileSync(p,"utf8"));
 const raw=s["iCubeAuthInfo://icube.cloudide"];
@@ -52,7 +74,7 @@ const out={
   osVersion:require("os").release(),
   _source: p,
 };
-const outPath=path.join(__dirname,"creds.json");
+const outPath=argOf("--out")?path.resolve(argOf("--out")):path.join(__dirname,"creds.json");
 fs.writeFileSync(outPath,JSON.stringify(out,null,2),{mode:0o600});
 console.log("✅ 已导出凭据到 creds.json");
 console.log("   userId:",out.userId,"| deviceId:",out.deviceId,"| machineId:",out.machineId?"已获取":"缺失","| token:",out.token?"已获取":"缺失","| refreshToken:",out.refreshToken?"已获取":"缺失");
