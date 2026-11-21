@@ -1,0 +1,13 @@
+{
+  "_说明": "复制到 dashboard/mail_config.json 并填写。QQ 邮箱需在【设置-账户】开启 SMTP 并生成授权码（不是登录密码）。",
+  "_smtp_host_choices": "smtp.qq.com(465 SSL) / smtp.163.com(465) / smtp.gmail.com(587 STARTTLS)",
+  "smtp_host": "smtp.qq.com",
+  "smtp_port": 465,
+  "smtp_ssl": true,
+  "smtp_user": "YOUR_NAME@qq.com",
+  "smtp_pass": "YOUR_SMTP_AUTH_CODE",
+  "from_name": "签到看板",
+  "whitelist": ["YOUR_NAME@qq.com"],
+  "dry_run": true,
+  "_dry_run_note": "首次部署建议 true：验证码只打印到控制台不真发邮件，调通后改 false 并重启服务"
+}

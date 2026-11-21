@@ -1,0 +1,67 @@
+{
+  "_说明": "凭据库结构示例（真实 vault.json 由看板自动维护，且必须 chmod 600，绝不入库）。这里展示各平台账号的字段结构，供理解与排障。真实凭据请通过看板『添加账号』表单填入。",
+  "version": 1,
+  "platforms": {
+    "workbuddy": [
+      {
+        "id": "workbuddy_1",
+        "name": "主号",
+        "enabled": true,
+        "accessToken": "<从本机 WorkBuddy 导出>",
+        "uid": "<可选>",
+        "domain": "www.workbuddy.cn"
+      }
+    ],
+    "trae": [
+      {
+        "id": "trae_1",
+        "name": "主号",
+        "enabled": true,
+        "token": "<从本机 Trae 导出>",
+        "refreshToken": "",
+        "userId": "",
+        "deviceId": "",
+        "machineId": "",
+        "host": "https://api.trae.cn",
+        "ideVersion": "",
+        "ideVersionCode": ""
+      }
+    ],
+    "qoder": [
+      {
+        "id": "qoder_1",
+        "name": "主号",
+        "enabled": true,
+        "accessToken": "<从本机 Qoder 导出>",
+        "refreshToken": "",
+        "uid": "",
+        "device": { "machineId": "<从 01_extract.py 导出>", "machineToken": "" }
+      }
+    ],
+    "minimax": [
+      {
+        "id": "minimax_1",
+        "name": "主号",
+        "enabled": true,
+        "accessToken": "<从本机 MiniMax Code 导出>",
+        "refreshToken": ""
+      }
+    ],
+    "codearts": [
+      {
+        "id": "codearts_1",
+        "name": "主号",
+        "enabled": true,
+        "accessKey": "<从本机 CodeArts Agent 解密>",
+        "secretKey": "",
+        "securityToken": "",
+        "expiresAt": "",
+        "refreshToken": "",
+        "codeVerifier": "",
+        "dpopD": "",
+        "dpopX": "",
+        "dpopY": ""
+      }
+    ]
+  }
+}

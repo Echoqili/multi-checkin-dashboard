@@ -1,0 +1,7 @@
+{
+  "_说明": "复制本文件到 scripts/config.json 并填写。脚本用它连接你的服务器。也可用环境变量 CHECKIN_PEM / CHECKIN_SERVER 覆盖。",
+  "pem": "C:/Users/You/Desktop/your-key.pem",
+  "server": "ubuntu@1.2.3.4",
+  "_ssh_user": "SSH 用户名（如 ubuntu / root），包含在 server 字段里",
+  "_note": "PEM 是 SSH 私钥路径；不要把真实私钥或填好的 config.json 提交到 git（已在 .gitignore 排除）"
+}

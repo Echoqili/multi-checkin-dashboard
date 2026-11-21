@@ -1,0 +1,144 @@
+# 多平台自动签到看板
+
+一个跑在服务器上的、带 Web 看板的多平台每日自动签到工具。当前支持 **WorkBuddy / Trae Work / Qoder / MiniMax Code / CodeArts(华为)** 五个平台，提供：
+
+- **Web 看板**：邮箱验证码登录（带发信限流）+ 应急 PIN 兜底，可视化查看各平台积分/签到状态
+- **多账号管理**：网页上添加 / 编辑 / 删除 / 启停账号，凭据不出服务器
+- **自动签到**：cron 定时触发，幂等（已领自动跳过），结果写日志
+- **自动续期**：支持自动刷新的平台（MiniMax / Trae / CodeArts）临期自动换新凭据
+- **零第三方依赖**：后端纯 Python 标准库，签名逻辑用 Node 内置 crypto
+
+> 本项目仅用于**个人对自己账号的每日签到自动化**。请遵守各平台服务条款，勿用于滥用或批量注册。
+
+---
+
+## 平台与凭据来源
+
+这些平台的登录都发生在各自的**桌面客户端**里，服务器是无头 Linux 无法扫码替代，因此统一模式是：
+
+```
+本机客户端登录 → 本机脚本导出凭据 → 推送到服务器 vault.json → 看板/cron 读取签到
+```
+
+| 平台 | 凭据来源 | 服务端自动续期 | 本机脚本 |
+|---|---|---|---|
+| WorkBuddy | Electron 运行时解密的 accessToken | ❌ 约每月手动续期 | `scripts/renew_workbuddy_token.bat` |
+| Trae Work | storage.json 解密的 token/refreshToken/设备指纹 | ✅ token 刷新 | `scripts/export_creds.js` |
+| Qoder | 客户端 auth.v1.dat + runtime-info.exe 设备指纹 | — | `scripts/01_extract.py` |
+| MiniMax Code | `~/.minimax/auth/.../auth.json` 的 OAuth | ✅ 临期自动 refresh | `scripts/renew_minimax_token.py` |
+| CodeArts | `state.vscdb` 会话（DPAPI + AES-GCM 解密） | ✅ 临期走 STS refresh | `scripts/renew_codearts_token.py` |
+
+> 关于"扫码登录"：调研结论是 Trae / CodeArts 无法全自动（回调绑本机端口 / 凭据体系独立）；WorkBuddy / Qoder / MiniMax 理论有设备码授权流，但端点多为第三方逆向、未在本项目验证，故不提供。
+
+---
+
+## 目录结构
+
+```
+multi-checkin-dashboard/
+├── dashboard/                  # 部署到服务器的看板
+│   ├── server.py               # 后端（HTTP + 登录 + 签到编排）
+│   ├── index.html              # 前端单页
+│   ├── cron_checkin.py         # cron 定时签到入口
+│   ├── codearts.js             # CodeArts 签名/refresh/签到（Node）
+│   ├── setup_pin.py            # 生成应急 PIN 的 salt/hash
+│   ├── init_vault.py           # 从旧单账号凭据迁移到 vault（一次性）
+│   └── (vault.json / mail_config.json / pin_config.json 运行时生成，不入库)
+├── scripts/                    # 本机运行：导出/续期凭据
+│   ├── 01_extract.py           # Qoder 凭据导出
+│   ├── export_creds.js         # Trae 凭据导出
+│   ├── server-checkin.js       # Trae 服务器签到（参考）
+│   ├── signin_server.py        # WorkBuddy 服务器签到（参考）
+│   ├── renew_workbuddy_token.bat
+│   ├── renew_minimax_token.py
+│   ├── renew_codearts_token.py
+│   └── (config.json 运行时填写，不入库)
+├── examples/                   # 配置模板（复制后填写）
+│   ├── config.example.json     # 服务器连接参数
+│   ├── mail_config.example.json# SMTP 邮箱配置
+│   └── vault.example.json      # 凭据库结构说明
+├── deploy.sh                   # 服务器端一键部署
+├── nginx-checkin.conf.example  # nginx 反代示例
+└── README.md
+```
+
+---
+
+## 快速部署
+
+### 1. 服务器准备
+
+- Linux（Ubuntu 22.04 验证），Python 3.8+，**Node 18+**（仅 CodeArts 签名需要）
+- 一个非 root 用户（如 ubuntu），SSH 密钥登录
+- 可选：nginx（用于公网反代 + 强制不缓存头）
+
+### 2. 上传看板
+
+```bash
+scp -r dashboard/ ubuntu@YOUR_SERVER:~/checkin/dashboard/
+cd ~/checkin/dashboard
+```
+
+### 3. 生成应急 PIN
+
+```bash
+python3 setup_pin.py          # 交互式输入 PIN，只存 salt+hash
+```
+
+### 4. 配置邮箱登录（可选但推荐）
+
+```bash
+cp ../examples/mail_config.example.json mail_config.json
+# 编辑 mail_config.json：填 smtp_user / smtp_pass(授权码) / whitelist
+# 首次部署保持 dry_run=true，验证码只打印到控制台，调通后改 false
+```
+
+### 5. 初始化凭据库
+
+看板的 `vault.json` 会在首次添加账号时自动生成。也可先用模板：`cp ../examples/vault.example.json vault.json`（删掉 `_说明` 字段），然后 `chmod 600 vault.json`。
+
+### 6. 启动服务
+
+```bash
+# 前台试跑
+python3 server.py
+
+# 或注册为 systemd（见 deploy.sh）
+```
+
+服务默认监听 `127.0.0.1:8899`。如需公网访问，用 nginx 反代（见 `nginx-checkin.conf.example`）。
+
+### 7. 配置 cron
+
+```bash
+crontab -e
+# 每天 08:15 / 12:15 / 20:15 签到
+15 8,12,20 * * * cd ~/checkin/dashboard && python3 cron_checkin.py all >> ~/checkin/checkin.log 2>&1
+```
+
+---
+
+## 添加账号
+
+1. 在本机运行对应平台的导出脚本拿到凭据（见上表 `scripts/`）
+2. 打开看板 → 登录 → 点对应平台卡片的「添加」
+3. 按表单提示填字段（必填项标 `*`，敏感项可点「显示」）
+   - Qoder 需额外粘贴 `01_extract.py` 输出的 device JSON
+4. 保存时后端会校验必填字段并自动跑一次状态查询验证凭据
+
+---
+
+## 安全须知
+
+- **真实凭据绝不入库**：`vault.json`、`mail_config.json`、`pin_config.json`、`config.json`、各 `*_account.json`、`.pem` 均已在 `.gitignore` 排除
+- `vault.json` 权限 `600`，只存服务器
+- PIN 只存 salt + hash，明文不落盘
+- 邮箱验证码：5 分钟有效、一次性、错 5 次作废，发信有多级限流
+- Session 为 httpOnly cookie，服务重启即失效
+- 公网部署务必用 HTTPS + 防火墙只放行必要端口
+
+---
+
+## License
+
+MIT

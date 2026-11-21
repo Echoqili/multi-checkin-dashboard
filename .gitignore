@@ -1,0 +1,38 @@
+# ===== 真实凭据（绝不入库）=====
+dashboard/vault.json
+dashboard/mail_config.json
+dashboard/pin_config.json
+dashboard/mail.log
+dashboard/*.log
+dashboard/token.txt
+dashboard/uid.txt
+scripts/config.json
+scripts/token.txt
+scripts/uid.txt
+scripts/creds.json
+scripts/accounts.json
+scripts/config.json
+scripts/*.log
+*_account.json
+wb_access_token.txt
+看板PIN.txt
+*.pem
+*.key
+
+# ===== 本机续期脚本导出的临时凭据 =====
+_codearts_sync_tmp.json
+codearts_session_plain.json
+codearts_key_tmp.txt
+_ca_state_copy.db
+
+# ===== 运行/缓存产物 =====
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+*.bak
+*.bak.*
+
+# ===== 编辑器 =====
+.idea/
+.vscode/

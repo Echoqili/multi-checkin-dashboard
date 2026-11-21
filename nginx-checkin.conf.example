@@ -1,0 +1,19 @@
+# 放到 /etc/nginx/conf.d/checkin.conf，按需改监听端口与 server_name
+# 用 HTTP 直接暴露时，前端会被浏览器缓存，故加 no-store 头；生产建议改 HTTPS。
+server {
+    listen 18085;
+    listen [::]:18085;
+    server_name _;
+    client_max_body_size 2m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8899;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+    }
+}
