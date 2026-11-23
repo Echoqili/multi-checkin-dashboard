@@ -225,17 +225,52 @@ def trae_checkin(acc):
         return {"ok": True, "note": "签到成功"}
     return {"ok": False, "note": "签到失败 HTTP %s" % code}
 
-def qoder_call(acc, path, method="GET", body=None):
+def qoder_headers(acc, token=None):
     # 设备指纹优先取账号自身的 device（支持多账号），旧数据回退到 vault 顶层 qoder_device
     dev = acc.get("device") or read_vault().get("qoder_device", {})
-    headers = {"Accept": "application/json", "User-Agent": "Qoder/claim",
-               "Cosy-ClientType": "10", "Cosy-MachineOS": dev.get("machineOS", "x86_64_windows"),
-               "Cosy-MachineHostname": dev.get("machineHostname", ""),
-               "Cosy-MachineId": dev.get("machineId", ""), "Cosy-MachineToken": dev.get("machineToken", ""),
-               "Cosy-MachineCode": dev.get("machineCode", ""), "Cosy-MachineType": dev.get("machineType", ""),
-               "Cosy-Version": dev.get("version", "0.5.17"),
-               "Authorization": "Bearer " + acc.get("accessToken", "")}
-    return http_json("https://openapi.qoder.com.cn" + path, method, headers, body)
+    return {"Accept": "application/json", "User-Agent": "Qoder/claim",
+            "Cosy-ClientType": "10", "Cosy-MachineOS": dev.get("machineOS", "x86_64_windows"),
+            "Cosy-MachineHostname": dev.get("machineHostname", ""),
+            "Cosy-MachineId": dev.get("machineId", ""), "Cosy-MachineToken": dev.get("machineToken", ""),
+            "Cosy-MachineCode": dev.get("machineCode", ""), "Cosy-MachineType": dev.get("machineType", ""),
+            "Cosy-Version": dev.get("version", "0.5.17"),
+            "Authorization": "Bearer " + (token if token is not None else acc.get("accessToken", ""))}
+
+def qoder_refresh(acc):
+    """用 refreshToken 换新设备令牌。Qoder 返回字段是 device_token（非 token/accessToken），
+    且 refresh_token 会轮换——成功后必须立刻写回 vault，否则旧 rt 作废。"""
+    rt = acc.get("refreshToken")
+    if not rt: return False
+    code, body = http_json("https://openapi.qoder.com.cn/api/v1/deviceToken/refresh", "POST",
+                           qoder_headers(acc), {"refresh_token": rt})
+    if code != 200 or not isinstance(body, dict): return False
+    at = body.get("device_token") or body.get("token") or body.get("accessToken")
+    if not at: return False
+    nrt = body.get("refresh_token") or rt
+    exp = body.get("expires_at", "")
+    acc["accessToken"], acc["refreshToken"] = at, nrt
+    if exp: acc["expiresAt"] = exp
+    try:
+        v = read_vault()
+        for a in v["platforms"].get("qoder", []):
+            if a.get("id") == acc.get("id"):
+                a["accessToken"], a["refreshToken"] = at, nrt
+                if exp: a["expiresAt"] = exp
+                break
+        write_vault(v)
+        audit("Qoder 凭据自动续期成功 id=%s 到期=%s" % (acc.get("id"), exp or "?"))
+    except Exception as e:
+        audit("Qoder 凭据写回失败 id=%s err=%s" % (acc.get("id"), str(e)[:80]))
+    return True
+
+def qoder_call(acc, path, method="GET", body=None):
+    code, data = http_json("https://openapi.qoder.com.cn" + path, method, qoder_headers(acc), body)
+    # token 过期时自动刷新并重试一次（dt- 令牌约 30 天有效）
+    if code == 401 and isinstance(data, dict) and (
+            data.get("code") == "TOKEN_EXPIRE" or "not active" in str(data.get("message", ""))):
+        if qoder_refresh(acc):
+            code, data = http_json("https://openapi.qoder.com.cn" + path, method, qoder_headers(acc), body)
+    return code, data
 def qoder_campaigns(acc):
     """返回 (data, benefits可领, benefits已领, svr_claimable)。
     兼容两种活动类型：CLAIM_BENEFIT(领取福利) 与 VIEW_DETAILS(查看详情/已领)。"""
