@@ -147,6 +147,21 @@
   .verify-badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:4px 10px;border-radius:20px;font-weight:600}
   .verify-badge.ok{background:#e8f8ef;color:#0a8f4d}
   .verify-badge.fail{background:#fdecef;color:#c81e3a}
+  .mtabs{display:flex;gap:6px;padding:12px 26px 0;border-bottom:1px solid var(--line);background:#fafbfe}
+  .mtab{border:none;background:transparent;padding:9px 14px;font-size:13px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;border-radius:8px 8px 0 0}
+  .mtab:hover{color:var(--ink)}
+  .mtab.active{color:var(--primary);border-bottom-color:var(--primary);background:#fff}
+  .oauth-box{margin-top:14px;padding:15px;border:1px solid #dfe4ff;border-radius:13px;background:linear-gradient(135deg,#f5f7ff,#ffffff)}
+  .oauth-desc{font-size:12px;color:#4b5563;line-height:1.55;margin-bottom:10px}
+  .oauth-step{margin-top:12px;padding:13px;border-radius:11px;background:#fff;border:1px solid var(--line)}
+  .oauth-code{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:8px;background:#f3f4ff;color:var(--primary);font-family:ui-monospace,Consolas,monospace;font-size:16px;font-weight:700;letter-spacing:1.5px;margin:8px 0}
+  .oauth-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .oauth-btns a,.oauth-btns button{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:9px 14px;border-radius:9px;font-size:12px;font-weight:600;text-decoration:none;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+  .oauth-btns a.primary,.oauth-btns button.primary{background:linear-gradient(135deg,var(--primary2),var(--primary));color:#fff;border-color:transparent}
+  .oauth-status{margin-top:10px;font-size:12px;color:var(--primary);display:flex;align-items:center;gap:7px}
+  .oauth-status.err{color:var(--red)}
+  .oauth-status.ok{color:var(--green)}
+  .acct-cnt{font-size:11px;font-weight:600;color:var(--primary);background:#eef0ff;padding:2px 7px;border-radius:99px;margin-left:6px;vertical-align:middle}
   .spin{animation:sp .9s linear infinite;display:inline-block}@keyframes sp{to{transform:rotate(360deg)}}
   @media(max-width:760px){.summary{grid-template-columns:repeat(2,1fr)}.app{padding:22px 16px}.hd-actions{flex-wrap:wrap}}
 </style>
@@ -219,14 +234,53 @@
       </div>
       <button class="mclose" onclick="closeModal()" title="关闭">×</button>
     </div>
+    <div class="mtabs" id="modalTabs" style="display:none">
+      <button type="button" class="mtab" data-tab="oauth" onclick="switchModalTab('oauth')">授权登录（推荐）</button>
+      <button type="button" class="mtab" data-tab="manual" onclick="switchModalTab('manual')">手动填写</button>
+      <button type="button" class="mtab" data-tab="batch" onclick="switchModalTab('batch')">批量导入</button>
+    </div>
     <div class="mbody">
-      <label>账号名称 <span class="opt">便于区分多个账号</span></label>
-      <input id="f_name" placeholder="例如：小号 / 工作号">
-      <div id="dynamicFields"></div>
+      <div id="nameRow">
+        <label>账号名称 <span class="opt">便于区分多个账号（留空自动命名）</span></label>
+        <input id="f_name" placeholder="例如：主号 / 小号 / 国际版">
+      </div>
+      <div id="paneOauth" style="display:none">
+        <div class="oauth-box">
+          <div class="oauth-desc" id="oauthDesc"></div>
+          <div id="oauthOpts"></div>
+          <div class="oauth-btns" id="oauthStartWrap">
+            <button type="button" class="primary" id="oauthStartBtn" onclick="startOAuth()">发起授权登录</button>
+          </div>
+          <div class="oauth-step" id="oauthStep" style="display:none">
+            <div style="font-size:12px;color:#374151;line-height:1.5" id="oauthTip"></div>
+            <div id="oauthCodeWrap" style="display:none">
+              <div style="font-size:11px;color:var(--muted);margin-top:8px">设备验证码：</div>
+              <div class="oauth-code"><span id="oauthCode"></span><button type="button" style="border:none;background:transparent;color:var(--primary);font-size:11px;cursor:pointer" onclick="copyText($('oauthCode').textContent,'验证码已复制')">复制</button></div>
+            </div>
+            <div class="oauth-btns">
+              <a id="oauthLink" class="primary" href="#" target="_blank" rel="noopener noreferrer">打开授权页面</a>
+              <button type="button" onclick="copyText($('oauthLink').href,'授权链接已复制，建议粘贴到无痕窗口登录')">复制链接（无痕登录）</button>
+              <button type="button" onclick="cancelOAuth()">取消重试</button>
+            </div>
+            <div class="oauth-status" id="oauthStatus"><span class="spin">⟳</span> 等待完成授权…</div>
+          </div>
+        </div>
+      </div>
+      <div id="paneManual">
+        <div id="dynamicFields"></div>
+      </div>
+      <div id="paneBatch" style="display:none">
+        <label>批量账号数据 <span class="opt">支持 JSON 数组或每行一条（自动按 UID/Token 去重合并）</span></label>
+        <textarea id="f_batch" style="min-height:150px;font-family:ui-monospace,Consolas,monospace;font-size:12px" placeholder=""></textarea>
+        <div class="fhelp" id="batchHelp"></div>
+        <label style="display:flex;align-items:center;gap:7px;font-weight:500;cursor:pointer;margin-top:10px">
+          <input type="checkbox" id="f_batch_verify" style="width:auto"> 导入后逐个验证凭据（账号多时略慢）
+        </label>
+      </div>
       <div class="fhint" id="modalHint"></div>
     </div>
     <div class="mfoot">
-      <button class="cancel" onclick="closeModal()">取消</button>
+      <button class="cancel" onclick="closeModal()">关闭</button>
       <button class="save" id="saveBtn">保存并验证</button>
     </div>
   </div>
@@ -242,11 +296,17 @@ const BRAND={
   codearts:{tag:'CA',bg:'linear-gradient(135deg,#60a5fa,#1e40af)',bc:'#2563eb'}
 };
 const STATUS={ok:{label:'今日已签',cls:'b-ok'},wait:{label:'待领取',cls:'b-wait'},warn:{label:'需关注',cls:'b-warn'}};
-// 字段定义从后端 /api/account-schema 拉取（单一真相源），避免前后端漂移
-let SCHEMA={},DATA=null,curModalPlatform=null,curEditId=null;
+// 字段定义与在线授权插件从后端 /api/account-schema 拉取（单一真相源），避免前后端漂移
+let SCHEMA={},DATA=null,curModalPlatform=null,curEditId=null,curModalTab='manual';
+let oauthSessionId=null,oauthPollTimer=null;
 const $=id=>document.getElementById(id);
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function toast(m,ms){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),ms||2300);}
+function copyText(txt,msg){
+  if(!txt)return;
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(()=>toast(msg||'已复制')).catch(()=>toast('复制失败，请手动复制'));}
+  else{const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');toast(msg||'已复制');}catch(e){toast('复制失败');}document.body.removeChild(ta);}
+}
 function stClass(a){return a.ok?(a.checked_in?'ok':'wait'):'warn';}
 function metric(l,v,u){const isTxt=!u&&typeof v==='string'&&v!=='—';return `<div class="metric"><div class="lbl">${esc(l)}</div><div class="val${isTxt?' txt':''}">${v??'—'}${u?`<span>${esc(u)}</span>`:''}</div></div>`;}
 function curAcct(p){return (p.accounts||[]).find(x=>x._sel)||(p.accounts||[]).find(x=>x.enabled)||(p.accounts||[])[0];}
@@ -304,16 +364,19 @@ function enterApp(){
 function showLogin(){$('loginView').style.display='flex';$('appView').style.display='none';}
 
 function renderSummary(){
-  const ps=DATA.platforms||[];let signed=0,today=0,total=0;
+  const ps=DATA.platforms||[];let signedAccts=0,totalAccts=0,today=0,wbTotal=0,wbCnt=0;
   ps.forEach(p=>{
-    const a=curAcct(p);
-    if(a&&a.ok&&a.checked_in){signed++;today+=(a.daily||0)+(a.extra||0);}
-    if(p.key==='workbuddy'&&a)total+=(a.total||0);
+    (p.accounts||[]).forEach(a=>{
+      if(!a.enabled)return;
+      totalAccts++;
+      if(a.ok&&a.checked_in){signedAccts++;today+=(a.daily||0)+(a.extra||0);}
+      if(p.key==='workbuddy'){wbCnt++;wbTotal+=(a.total||0);}
+    });
   });
   const stats=[
-    {lbl:'今日已签平台',num:signed,small:'/ '+ps.length,foot:signed===ps.length?'全部完成，真棒':'还有 '+(ps.length-signed)+' 个待签',tint:'#e3f7f0'},
-    {lbl:'今日获得积分',num:today,small:'分',foot:'来自已签平台',tint:'#eaf1fe'},
-    {lbl:'累计积分（WB）',num:total,small:'分',foot:'WorkBuddy 主账号',tint:'#f3ebff'},
+    {lbl:'今日已签账号',num:signedAccts,small:'/ '+totalAccts,foot:totalAccts?(signedAccts===totalAccts?'全部启用账号已完成':'还有 '+(totalAccts-signedAccts)+' 个账号待签'):'尚未添加启用账号',tint:'#e3f7f0'},
+    {lbl:'今日获得积分',num:today,small:'分',foot:'汇总所有已签启用账号',tint:'#eaf1fe'},
+    {lbl:'累计积分（WB）',num:wbTotal,small:'分',foot:wbCnt>1?('WorkBuddy '+wbCnt+' 个账号合计'):'WorkBuddy 启用账号',tint:'#f3ebff'},
     {lbl:'自动签到',num:'运行中',small:'',foot:'<span class="pulse"></span>cron 定时 · 幂等',tint:'#e3f7f0'}
   ];
   $('summary').innerHTML=stats.map(s=>`<div class="stat" style="--tint:${s.tint}"><div class="lbl">${s.lbl}</div><div class="num">${s.num}${s.small?`<small>${s.small}</small>`:''}</div><div class="foot">${s.foot}</div></div>`).join('');
@@ -323,7 +386,8 @@ function renderSummary(){
 }
 function platformCard(p){
   const accts=p.accounts||[];const b=BRAND[p.key]||{tag:'?',bg:'#64748b',bc:'#64748b'};
-  if(!accts.length)return `<div class="card" style="--bc:${b.bc}"><div class="card-top"><div class="picon" style="--bg-brand:${b.bg}">${b.tag}</div><div class="pname"><h3>${esc(p.label)}</h3></div></div><div class="status-row"><span class="note-txt">暂无账号</span></div><div class="actions"><button class="primary" onclick="openModal('${p.key}')">+ 添加账号</button></div></div>`;
+  const hasOAuth=(p.providers||[]).length>0;
+  if(!accts.length)return `<div class="card" style="--bc:${b.bc}"><div class="card-top"><div class="picon" style="--bg-brand:${b.bg}">${b.tag}</div><div class="pname"><h3>${esc(p.label)}</h3></div></div><div class="status-row"><span class="note-txt">暂无账号</span></div><div class="actions"><button class="primary" onclick="openModal('${p.key}')">${hasOAuth?'+ 授权/添加账号':'+ 添加账号'}</button></div></div>`;
   const a=curAcct(p),s=STATUS[stClass(a)]||STATUS.warn;
   let m='';
   if(p.key==='workbuddy')m=metric('连签',a.streak,'天')+metric('累计积分',a.total,'分');
@@ -332,16 +396,20 @@ function platformCard(p){
   else m=metric('每日积分',a.daily,'分')+metric('今日状态',a.checked_in?'已签':'未签','');
   const opts=accts.map(x=>`<option value="${esc(x.id)}" ${x.id===a.id?'selected':''}>${esc(x.name)}${x.enabled?'':'（停用）'}</option>`).join('');
   const logs=(p.logs||[]).slice(-4).join('\n')||'（暂无记录）';
+  const cntBadge=accts.length>1?`<span class="acct-cnt">${accts.length} 账号</span>`:'';
+  const reauthBtn=hasOAuth?`<button onclick="reauthAcct('${p.key}','${esc(a.id)}','${esc(a.name||'')}')">重新授权</button>`:'';
+  const refreshBtn=(a.has_refresh||p.key==='codearts')?`<button onclick="doRefreshAcct('${p.key}','${esc(a.id)}')">续期</button>`:'';
   return `<div class="card" style="--bc:${b.bc}">
     <div class="card-top">
       <div class="picon" style="--bg-brand:${b.bg}">${b.tag}</div>
-      <div class="pname"><h3>${esc(p.label)}</h3></div>
+      <div class="pname"><h3>${esc(p.label)}${cntBadge}</h3></div>
       <select class="sel" onchange="selectAcct('${p.key}',this.value)">${opts}</select>
     </div>
     <div class="status-row"><span class="badge ${s.cls}"><i class="bd"></i>${s.label}</span><span class="note-txt">${esc(a.note||'')}</span></div>
     <div class="metrics">${m}</div>
     <div class="actions">
       <button class="primary" onclick="doCheckin('${p.key}','${esc(a.id)}')">立即签到</button>
+      ${reauthBtn}${refreshBtn}
       <button onclick="toggleAcct('${p.key}','${esc(a.id)}',${!a.enabled})">${a.enabled?'停用':'启用'}</button>
       <button onclick="editAcct('${p.key}','${esc(a.id)}','${esc(a.name||'')}')">编辑</button>
       <button onclick="openModal('${p.key}')">添加</button>
@@ -411,31 +479,198 @@ function makeField(f,val){
   if(f.help){const h=document.createElement('div');h.className='fhelp';h.textContent=f.help;wrap.appendChild(h);}
   return wrap;
 }
-async function openModal(pk){
+async function doRefreshAcct(pk,id){
+  toast('正在续期凭据…');
+  try{
+    const d=await api('/api/accounts/refresh',{method:'POST',body:JSON.stringify({platform:pk,id})});
+    toast((d.ok?'✓ ':'失败：')+(d.note||''),3500);
+    if(d.ok)setTimeout(load,500);
+  }catch(e){if(e.message!=='未登录')toast('续期请求出错');}
+}
+function stopOAuthPoll(){
+  if(oauthPollTimer){clearTimeout(oauthPollTimer);oauthPollTimer=null;}
+}
+async function cancelOAuth(){
+  stopOAuthPoll();
+  if(oauthSessionId){
+    const sid=oauthSessionId;oauthSessionId=null;
+    fetch('/api/auth/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sid})}).catch(()=>{});
+  }
+  $('oauthStep').style.display='none';
+  $('oauthStartWrap').style.display='flex';
+  $('oauthStartBtn').disabled=false;
+  $('oauthStartBtn').textContent='发起授权登录';
+}
+function curProviders(pk){
+  const s=SCHEMA[pk];if(s&&s.providers&&s.providers.length)return s.providers;
+  const p=(DATA&&DATA.platforms||[]).find(x=>x.key===pk);
+  return (p&&p.providers)||[];
+}
+function renderOAuthPane(pk){
+  const provs=curProviders(pk);
+  const prov=provs[0];
+  if(!prov)return;
+  $('oauthDesc').textContent=prov.description||'通过官方页面完成授权登录';
+  const wrap=$('oauthOpts');wrap.innerHTML='';
+  if(provs.length>1){
+    const lab=document.createElement('label');lab.textContent='登录方式';wrap.appendChild(lab);
+    const sel=document.createElement('select');sel.id='oauthProviderSel';
+    provs.forEach(p=>{const o=document.createElement('option');o.value=p.provider_id;o.textContent=p.label;sel.appendChild(o);});
+    wrap.appendChild(sel);
+  }
+  (prov.options||[]).forEach(opt=>{
+    const lab=document.createElement('label');lab.textContent=opt.label;wrap.appendChild(lab);
+    const sel=document.createElement('select');sel.dataset.optKey=opt.key;
+    (opt.choices||[]).forEach(ch=>{
+      const o=document.createElement('option');o.value=ch.value;o.textContent=ch.label;
+      if(ch.value===opt.default)o.selected=true;
+      sel.appendChild(o);
+    });
+    wrap.appendChild(sel);
+  });
+  $('oauthStep').style.display='none';
+  $('oauthStartWrap').style.display='flex';
+  $('oauthStartBtn').disabled=false;
+  $('oauthStartBtn').textContent=curEditId?'发起重新授权':'发起授权登录';
+}
+async function startOAuth(){
+  const provs=curProviders(curModalPlatform);
+  if(!provs.length){toast('该平台暂不支持在线授权');return;}
+  const provId=($('oauthProviderSel')&&$('oauthProviderSel').value)||provs[0].provider_id;
+  const options={};
+  $('oauthOpts').querySelectorAll('[data-opt-key]').forEach(el=>{options[el.dataset.optKey]=el.value;});
+  const btn=$('oauthStartBtn');btn.disabled=true;btn.innerHTML='<span class="spin">◌</span> 正在生成链接…';
+  try{
+    const d=await api('/api/auth/start',{method:'POST',body:JSON.stringify({
+      platform:curModalPlatform,provider_id:provId,options,
+      account_id:curEditId||'',name:$('f_name').value.trim()
+    })});
+    if(!d.ok){toast(d.note||'发起授权失败',3500);btn.disabled=false;btn.textContent='重试发起授权';return;}
+    oauthSessionId=d.session_id;
+    $('oauthTip').textContent=d.tip||'请打开下方链接完成登录授权';
+    $('oauthLink').href=d.auth_url;
+    if(d.user_code){$('oauthCode').textContent=d.user_code;$('oauthCodeWrap').style.display='block';}
+    else $('oauthCodeWrap').style.display='none';
+    $('oauthStatus').className='oauth-status';
+    $('oauthStatus').innerHTML='<span class="spin">⟳</span> 等待用户在浏览器中完成授权…';
+    $('oauthStartWrap').style.display='none';
+    $('oauthStep').style.display='block';
+    scheduleOAuthPoll(Math.max(2000,(d.poll_interval||3)*1000));
+  }catch(e){
+    if(e.message!=='未登录')toast('发起授权出错');
+    btn.disabled=false;btn.textContent='发起授权登录';
+  }
+}
+function scheduleOAuthPoll(ms){
+  stopOAuthPoll();
+  oauthPollTimer=setTimeout(pollOAuth,ms);
+}
+async function pollOAuth(){
+  if(!oauthSessionId)return;
+  try{
+    const d=await api('/api/auth/poll',{method:'POST',body:JSON.stringify({
+      session_id:oauthSessionId,auto_save:true,
+      account_id:curEditId||'',name:$('f_name').value.trim()
+    })});
+    if(d.status==='pending'){
+      $('oauthStatus').className='oauth-status';
+      $('oauthStatus').innerHTML='<span class="spin">⟳</span> '+esc(d.note||'等待完成授权…');
+      scheduleOAuthPoll(3000);
+      return;
+    }
+    oauthSessionId=null;
+    if(d.status==='success'){
+      $('oauthStatus').className='oauth-status ok';
+      $('oauthStatus').textContent='✓ '+(d.note||'授权成功');
+      toast(d.verified?('✓ '+d.name+' 授权并验证通过'):(d.name+' 已保存，但验证未通过：'+(d.verifyNote||'')),4200);
+      setTimeout(()=>{closeModal();load();},700);
+      return;
+    }
+    $('oauthStatus').className='oauth-status err';
+    $('oauthStatus').textContent='✕ '+(d.note||'授权已过期或失败，请点击取消重试');
+  }catch(e){
+    if(e.message!=='未登录')scheduleOAuthPoll(4000);
+  }
+}
+const BATCH_PLACEHOLDER={
+  workbuddy:'每行一个账号（备注|accessToken|uid|refreshToken|domain），或直接粘贴 JSON 数组：\n主号|eyJ...|uid123|rt_xxx|www.workbuddy.cn\n国际小号|eyJ...|uid456|rt_yyy|www.workbuddy.ai',
+  minimax:'每行一个账号（备注|accessToken|refreshToken），或粘贴 JSON 数组：\n主号|token1|rt1',
+  qoder:'每行一个账号（备注|accessToken|refreshToken|uid），或粘贴 JSON 数组',
+  trae:'每行一个账号（备注|token|userId|refreshToken|deviceId|machineId），或粘贴 JSON 数组',
+  codearts:'请粘贴 JSON 数组：[{"name":"主号","accessKey":"...","secretKey":"...","securityToken":"...","refreshToken":"...","codeVerifier":"...","dpopD":"...","dpopX":"...","dpopY":"..."}]'
+};
+function switchModalTab(tab){
+  curModalTab=tab;
+  $('modalTabs').querySelectorAll('.mtab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  $('paneOauth').style.display=tab==='oauth'?'block':'none';
+  $('paneManual').style.display=tab==='manual'?'block':'none';
+  $('paneBatch').style.display=tab==='batch'?'block':'none';
+  $('nameRow').style.display=tab==='batch'?'none':'block';
+  $('saveBtn').style.display=tab==='oauth'?'none':'block';
+  if(tab==='batch')$('saveBtn').textContent='开始批量导入';
+  else $('saveBtn').textContent='保存并验证';
+  if(tab==='oauth'){
+    $('modalHint').innerHTML='<b>多账号技巧：</b>点击「复制链接（无痕登录）」并在浏览器无痕/隐私窗口打开，可连续登录多个不同账号而互不覆盖。';
+  }else if(tab==='batch'){
+    $('modalHint').innerHTML='支持开源社区 <b>备注|AT|uid|RT</b> 格式与标准 JSON 数组；已存在的同 UID/Token 账号会自动更新，不会重复创建。';
+  }else{
+    $('modalHint').innerHTML=curEditId?'敏感项显示为空表示保留原值；如需修改请重新填入。保存后自动验证。':'凭据仅保存在服务器 <b>vault.json</b>（权限 600），不会写进日志或前端。敏感项可点「显示」切换明文。';
+  }
+}
+async function openModal(pk,defaultTab){
+  cancelOAuth();
   curModalPlatform=pk;curEditId=null;
   const info=(SCHEMA[pk]||{});const fields=info.fields||[];const b=BRAND[pk]||{tag:'?',bg:'#64748b'};
+  const hasOAuth=curProviders(pk).length>0;
   $('modalIcon').textContent=b.tag;$('modalIcon').style.setProperty('--bg-brand',b.bg);
   $('modalTitle').textContent='添加账号 · '+(info.label||pk);
-  $('modalSub').textContent='填写凭据后会自动验证是否可用';
-  $('saveBtn').textContent='保存并验证';
+  $('modalSub').textContent=hasOAuth?'支持网页授权登录、手动填写或批量导入':'填写凭据或批量导入，保存后自动验证';
   $('f_name').value='';
+  $('f_batch').value='';
+  $('f_batch').placeholder=BATCH_PLACEHOLDER[pk]||'粘贴 JSON 数组';
+  $('batchHelp').textContent='兼容 JSON（支持 access_token / refresh_token 字段自动转换）及竖线分隔文本。';
   renderFields(pk,fields,{});
-  $('modalHint').innerHTML='凭据仅保存在服务器 <b>vault.json</b>（权限 600），不会写进日志或前端。敏感项可点「显示」切换明文。';
+  if(hasOAuth)renderOAuthPane(pk);
+  $('modalTabs').style.display='flex';
+  $('modalTabs').querySelector('[data-tab="oauth"]').style.display=hasOAuth?'inline-block':'none';
+  $('modalTabs').querySelector('[data-tab="batch"]').style.display='inline-block';
+  switchModalTab(defaultTab||(hasOAuth?'oauth':'manual'));
   $('modal').style.display='flex';
 }
-async function editAcct(pk,id,name){
+async function reauthAcct(pk,id,name){
+  cancelOAuth();
   curModalPlatform=pk;curEditId=id;
   const info=(SCHEMA[pk]||{});const fields=info.fields||[];const b=BRAND[pk]||{tag:'?',bg:'#64748b'};
   $('modalIcon').textContent=b.tag;$('modalIcon').style.setProperty('--bg-brand',b.bg);
+  $('modalTitle').textContent='重新授权 · '+(info.label||pk);
+  $('modalSub').textContent='授权完成后将自动更新该账号的新 Token';
+  $('f_name').value=name||'';
+  renderFields(pk,fields,{});
+  renderOAuthPane(pk);
+  $('modalTabs').style.display='flex';
+  $('modalTabs').querySelector('[data-tab="oauth"]').style.display='inline-block';
+  $('modalTabs').querySelector('[data-tab="batch"]').style.display='none';
+  switchModalTab('oauth');
+  $('modal').style.display='flex';
+}
+async function editAcct(pk,id,name){
+  cancelOAuth();
+  curModalPlatform=pk;curEditId=id;
+  const info=(SCHEMA[pk]||{});const fields=info.fields||[];const b=BRAND[pk]||{tag:'?',bg:'#64748b'};
+  const hasOAuth=curProviders(pk).length>0;
+  $('modalIcon').textContent=b.tag;$('modalIcon').style.setProperty('--bg-brand',b.bg);
   $('modalTitle').textContent='编辑账号 · '+(info.label||pk);
   $('modalSub').textContent='留空的敏感项将保留原值';
-  $('saveBtn').textContent='保存并验证';
   $('f_name').value=name||'';
   try{
     const d=await api('/api/account-detail?platform='+encodeURIComponent(pk)+'&id='+encodeURIComponent(id));
     renderFields(pk,fields,d.account||{});
   }catch(e){renderFields(pk,fields,{});toast('读取账号详情失败');}
-  $('modalHint').innerHTML='敏感项显示为空表示保留原值；如需修改请重新填入。保存后自动验证。';
+  if(hasOAuth)renderOAuthPane(pk);
+  $('modalTabs').style.display=hasOAuth?'flex':'none';
+  $('modalTabs').querySelector('[data-tab="oauth"]').style.display=hasOAuth?'inline-block':'none';
+  $('modalTabs').querySelector('[data-tab="batch"]').style.display='none';
+  switchModalTab('manual');
   $('modal').style.display='flex';
 }
 function renderFields(pk,fields,vals){
@@ -459,17 +694,35 @@ function renderFields(pk,fields,vals){
     wrap.appendChild(grp);
   });
 }
-function closeModal(){$('modal').style.display='none';curEditId=null;}
+function closeModal(){cancelOAuth();$('modal').style.display='none';curEditId=null;}
 async function saveAccount(){
+  if(curModalTab==='batch'){
+    const raw=$('f_batch').value.trim();
+    if(!raw){toast('请粘贴要导入的账号数据');return;}
+    const btn=$('saveBtn');btn.disabled=true;btn.innerHTML='<span class="spin">◌</span> 正在导入…';
+    try{
+      const d=await api('/api/accounts/import',{method:'POST',body:JSON.stringify({
+        platform:curModalPlatform,raw,verify:$('f_batch_verify').checked
+      })});
+      if(d.ok){
+        let msg=`导入完成：新增 ${d.added}，更新 ${d.updated}`;
+        if(d.errors&&d.errors.length)msg+=`（${d.errors.length} 条失败：${d.errors[0]}）`;
+        toast(msg,4800);
+        closeModal();load();
+      }else toast('导入失败：'+(d.note||'未知原因'),4000);
+    }catch(e){toast('导入出错：'+(e.message||''));}
+    finally{btn.disabled=false;btn.textContent='开始批量导入';}
+    return;
+  }
   const account={};
   $('dynamicFields').querySelectorAll('input[data-key]').forEach(i=>{
     if(i.value.trim())account[i.dataset.key]=i.value.trim();
   });
-  // 前端必填校验
+  // 前端必填校验（编辑模式下敏感项留空允许保留原值）
   const fields=(SCHEMA[curModalPlatform]||{}).fields||[];
   let bad=null;
   for(const f of fields){
-    if(f.required&&!String(account[f.key]||'').trim()){
+    if(f.required&&!(curEditId&&f.sensitive)&&!String(account[f.key]||'').trim()){
       const inp=$('dynamicFields').querySelector('input[data-key="'+f.key+'"]');
       if(inp)inp.classList.add('invalid');
       if(!bad)bad=f.label;

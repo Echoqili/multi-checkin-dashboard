@@ -16,6 +16,10 @@ from http.cookies import SimpleCookie
 from datetime import datetime, timezone, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import auth_providers as AP
+
 BASE = os.path.expanduser("~/checkin")
 VAULT = os.path.join(HERE, "vault.json")
 MAIL_CFG = os.path.join(HERE, "mail_config.json")
@@ -27,6 +31,7 @@ TZ = timezone(timedelta(hours=8))
 SESSIONS = {}          # token -> {"ts":.., "email":..}
 SESSION_TTL = 8 * 3600 # 8 小时
 _lock = threading.Lock()
+_vault_lock = threading.Lock()
 
 # ---- 发信限流参数（可按实际调整）----
 SEND_COOLDOWN   = 60    # 同邮箱两次发送最小间隔（秒）
@@ -151,13 +156,27 @@ def verify_code(email, code):
     return True, "登录成功"
 
 def read_vault():
-    with open(VAULT, encoding="utf-8") as f: return json.load(f)
+    with _vault_lock:
+        if not os.path.exists(VAULT):
+            return {"version": 1, "platforms": {}}
+        with open(VAULT, encoding="utf-8") as f:
+            v = json.load(f)
+        if not isinstance(v, dict):
+            return {"version": 1, "platforms": {}}
+        v.setdefault("version", 1)
+        v.setdefault("platforms", {})
+        return v
 
 def write_vault(v):
-    tmp = VAULT + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f: json.dump(v, f, ensure_ascii=False, indent=2)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, VAULT)
+    with _vault_lock:
+        tmp = VAULT + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(v, f, ensure_ascii=False, indent=2)
+        try:
+            os.chmod(tmp, 0o600)
+        except Exception:
+            pass
+        os.replace(tmp, VAULT)
 
 def http_json(url, method="POST", headers=None, body=None, timeout=15):
     data = json.dumps(body or {}).encode() if method == "POST" else None
@@ -186,19 +205,59 @@ def wb_headers(acc):
     return {"Authorization": "Bearer " + acc.get("accessToken", ""),
             "X-User-Id": acc.get("uid", ""), "X-Domain": acc.get("domain", "www.workbuddy.cn"),
             "User-Agent": "WorkBuddy"}
+
+def wb_refresh(acc):
+    """用 refreshToken 自动换新 WorkBuddy accessToken 并写回 vault。"""
+    prov = AP.get_provider(platform="workbuddy")
+    if not prov or not acc.get("refreshToken"):
+        return False
+    ok, res = prov.refresh(acc)
+    if not ok or not isinstance(res, dict):
+        audit("WorkBuddy 凭据续期失败 id=%s err=%s" % (acc.get("id"), str(res)[:100]))
+        return False
+    acc.update(res)
+    try:
+        v = read_vault()
+        for a in v["platforms"].get("workbuddy", []):
+            if a.get("id") == acc.get("id"):
+                a.update(res)
+                break
+        write_vault(v)
+        audit("WorkBuddy 凭据自动续期成功 id=%s" % acc.get("id"))
+    except Exception as e:
+        audit("WorkBuddy 凭据写回失败 id=%s err=%s" % (acc.get("id"), str(e)[:80]))
+    return True
+
+def wb_ensure_token(acc):
+    exp = acc.get("expiresAtMs") or 0
+    if exp and (exp - time.time() * 1000 < 3600_000) and acc.get("refreshToken"):
+        wb_refresh(acc)
+    return acc
+
+def wb_call(acc, path):
+    wb_ensure_token(acc)
+    base = AP.wb_api_base(acc)
+    code, body = http_json(base + path, "POST", wb_headers(acc))
+    if code in (401, 403) and acc.get("refreshToken"):
+        if wb_refresh(acc):
+            code, body = http_json(base + path, "POST", wb_headers(acc))
+    return code, body
+
 def wb_status(acc):
-    code, body = http_json("https://copilot.tencent.com/v2/billing/meter/checkin-activity-status", "POST", wb_headers(acc))
+    code, body = wb_call(acc, "/v2/billing/meter/checkin-activity-status")
     d = (body.get("data") or body) if isinstance(body, dict) else {}
     if 200 <= code < 300:
         return {"ok": True, "checked_in": bool(d.get("today_checked_in")), "streak": d.get("streak_days", 0),
                 "total": d.get("total_credits", 0), "daily": d.get("daily_credit", 100),
                 "note": "今日已签" if d.get("today_checked_in") else "今日未签"}
-    return {"ok": False, "note": "查询失败 HTTP %s（token 可能过期）" % code}
+    hint = "token 可能过期，可点击重新授权" if not acc.get("refreshToken") else "token 失效且自动续期失败，请重新授权"
+    return {"ok": False, "note": "查询失败 HTTP %s（%s）" % (code, hint)}
+
 def wb_checkin(acc):
     st = wb_status(acc)
     if st.get("ok") and st.get("checked_in"): return {"ok": True, "note": "今日已签（跳过）"}
-    code, body = http_json("https://copilot.tencent.com/v2/billing/meter/daily-checkin", "POST", wb_headers(acc))
-    if code in (401, 403): return {"ok": False, "note": "认证失败，token 可能过期"}
+    code, body = wb_call(acc, "/v2/billing/meter/daily-checkin")
+    if code in (401, 403): return {"ok": False, "note": "认证失败，token 可能过期，请重新授权"}
     if 200 <= code < 300:
         d = (body.get("data") or body) if isinstance(body, dict) else {}
         credit = d.get("credit") if isinstance(d, dict) else None
@@ -445,9 +504,14 @@ PLATFORMS = {
 ACCOUNT_SCHEMA = {
     "workbuddy": [
         {"key": "accessToken", "label": "Access Token", "required": True, "sensitive": True,
-         "help": "本机 WorkBuddy 客户端运行时解密导出的 accessToken"},
+         "help": "可通过上方「网页授权登录」自动获取，或从本机 WorkBuddy 客户端导出"},
+        {"key": "refreshToken", "label": "Refresh Token", "required": False, "sensitive": True,
+         "help": "推荐填写（网页授权会自动获取），到期后可自动续期"},
         {"key": "uid", "label": "UID", "required": False, "help": "对应 X-User-Id，通常必填才能签到"},
-        {"key": "domain", "label": "域名", "required": False, "placeholder": "www.workbuddy.cn", "default": "www.workbuddy.cn"},
+        {"key": "domain", "label": "域名", "required": False, "placeholder": "www.workbuddy.cn", "default": "www.workbuddy.cn",
+         "help": "国内版填 www.workbuddy.cn，国际版填 www.workbuddy.ai"},
+        {"key": "apiBase", "label": "API 地址", "required": False, "placeholder": "留空按域名自动推断",
+         "help": "一般留空即可（国内自动走 copilot.tencent.com，国际自动走 www.workbuddy.ai）"},
     ],
     "trae": [
         {"key": "token", "label": "Token", "required": True, "sensitive": True, "help": "从本机 storage.json 解密导出"},
@@ -509,6 +573,92 @@ def verify_account(pk, acc):
     except Exception as e:
         return False, "凭据校验异常：" + str(e)[:80]
 
+def _account_identity(pk, acc):
+    """提取用于多账号去重的唯一标识列表（按 uid/userId/accessToken/token）。"""
+    ids = []
+    for k in ("uid", "userId"):
+        v = str(acc.get(k) or "").strip()
+        if v:
+            ids.append((k, v))
+    for k in ("accessToken", "token"):
+        v = str(acc.get(k) or "").strip()
+        if v:
+            ids.append((k, v))
+    return ids
+
+
+def upsert_account(pk, acc_in, name="", aid="", dedupe=True, vault=None):
+    """按 id 或唯一标识合并写入账号，返回 (vault, acc, action: 'added'|'updated')。"""
+    v = vault if vault is not None else read_vault()
+    lst = v["platforms"].setdefault(pk, [])
+    target_idx = None
+    if aid:
+        target_idx = next((i for i, a in enumerate(lst) if a.get("id") == aid), None)
+    if target_idx is None and dedupe:
+        new_ids = _account_identity(pk, acc_in)
+        if new_ids:
+            for i, existing in enumerate(lst):
+                for k, val in new_ids:
+                    if str(existing.get(k) or "").strip() == val:
+                        target_idx = i
+                        break
+                if target_idx is not None:
+                    break
+
+    if target_idx is not None:
+        old = dict(lst[target_idx])
+        merged = dict(old)
+        for k, val in acc_in.items():
+            if val is not None and str(val).strip() != "":
+                merged[k] = val
+        merged["id"] = old.get("id") or aid or ("%s_%d_%s" % (pk, int(time.time()), secrets.token_hex(2)))
+        merged["name"] = (name or "").strip() or old.get("name") or merged.get("name") or "账号"
+        merged["enabled"] = old.get("enabled", True)
+        lst[target_idx] = merged
+        action = "updated"
+        acc = merged
+    else:
+        acc = dict(acc_in)
+        acc["id"] = aid or ("%s_%d_%s" % (pk, int(time.time()), secrets.token_hex(2)))
+        acc["name"] = (name or "").strip() or acc.get("name") or ("账号 %d" % (len(lst) + 1))
+        acc["enabled"] = acc.get("enabled", True)
+        lst.append(acc)
+        action = "added"
+
+    if vault is None:
+        write_vault(v)
+    return v, acc, action
+
+
+def refresh_account(pk, acc):
+    """手动触发单个账号的凭据续期，返回 (ok, note)。"""
+    if pk == "workbuddy":
+        if not acc.get("refreshToken"):
+            return False, "该 WorkBuddy 账号未配置 Refresh Token，请点击「授权登录」重新授权"
+        ok = wb_refresh(acc)
+        return (True, "WorkBuddy 凭据续期成功") if ok else (False, "WorkBuddy 续期失败，请点击「授权登录」重新授权")
+    if pk == "minimax":
+        if not acc.get("refreshToken"):
+            return False, "该 MiniMax 账号未配置 Refresh Token"
+        acc["expiresAtMs"] = 0
+        old_at = acc.get("accessToken")
+        mm_ensure_token(acc)
+        if acc.get("accessToken") and acc.get("accessToken") != old_at:
+            return True, "MiniMax 凭据续期成功"
+        return False, "MiniMax 续期失败，请重新授权"
+    if pk == "qoder":
+        if not acc.get("refreshToken"):
+            return False, "该 Qoder 账号未配置 Refresh Token"
+        ok = qoder_refresh(acc)
+        return (True, "Qoder 凭据续期成功") if ok else (False, "Qoder 续期失败")
+    if pk == "codearts":
+        acc_copy = dict(acc)
+        acc_copy["expiresAt"] = ""
+        res, ok = codearts_invoke(acc_copy, "status")
+        return (True, "CodeArts 凭据续期成功") if ok else (False, res.get("note", "续期失败"))
+    return False, "该平台暂不支持服务端自动续期"
+
+
 def build_status():
     v = read_vault()
     out = []
@@ -517,9 +667,11 @@ def build_status():
         for a in v["platforms"].get(pk, []):
             try: st = meta["status"](a)
             except Exception as e: st = {"ok": False, "note": "异常：" + str(e)[:50]}
-            st.update(id=a.get("id"), name=a.get("name"), enabled=a.get("enabled", True))
+            st.update(id=a.get("id"), name=a.get("name"), enabled=a.get("enabled", True),
+                      has_refresh=bool(a.get("refreshToken")))
             accts.append(st)
         out.append({"key": pk, "label": meta["label"], "schedule": meta["schedule"],
+                    "providers": AP.list_providers(pk),
                     "accounts": accts, "logs": tail_log(meta["log"])})
     return {"updated": now_cn(), "platforms": out}
 
@@ -660,7 +812,7 @@ class Handler(BaseHTTPRequestHandler):
                 for i, a in enumerate(v["platforms"][pk]):
                     if a.get("id") == aid: v["platforms"][pk][i] = acc; break
             else:
-                acc["id"] = "%s_%d" % (pk, int(time.time()))
+                acc["id"] = "%s_%d_%s" % (pk, int(time.time()), secrets.token_hex(2))
                 acc["name"] = name or acc.get("name") or "账号"
                 acc["enabled"] = True
                 v["platforms"].setdefault(pk, []).append(acc)
@@ -671,6 +823,88 @@ class Handler(BaseHTTPRequestHandler):
             audit("账号%s pk=%s id=%s name=%s 验证=%s" %
                   ("编辑" if is_update else "添加", pk, acc["id"], acc["name"], "OK" if vok else "FAIL:" + vnote))
             self._send(200, {"ok": True, "id": acc["id"], "verified": vok, "verifyNote": vnote}); return
+        if path == "/api/auth/start":
+            pk = str(body.get("platform") or "").strip()
+            if pk not in PLATFORMS:
+                self._send(400, {"ok": False, "note": "平台不存在"}); return
+            res = AP.start_auth_session(
+                platform=pk,
+                provider_id=body.get("provider_id"),
+                options=body.get("options") or {},
+                account_id=body.get("account_id") or "",
+                account_name=body.get("name") or "",
+            )
+            audit("发起在线授权 pk=%s provider=%s ok=%s" % (pk, res.get("provider_id", ""), res.get("ok")))
+            self._send(200 if res.get("ok") else 400, res); return
+        if path == "/api/auth/poll":
+            sid = str(body.get("session_id") or "").strip()
+            if not sid:
+                self._send(400, {"ok": False, "status": "error", "note": "缺少 session_id"}); return
+            res = AP.poll_auth_session(sid)
+            if res.get("status") == "success" and body.get("auto_save", True):
+                pk = res.get("platform", "")
+                acc_in = res.get("account") or {}
+                aid = str(body.get("account_id") or res.get("account_id") or "").strip()
+                name = str(body.get("name") or res.get("account_name") or res.get("suggested_name") or "").strip()
+                _, acc, action = upsert_account(pk, acc_in, name=name, aid=aid, dedupe=True)
+                vok, vnote = verify_account(pk, acc)
+                audit("在线授权完成 pk=%s action=%s id=%s name=%s 验证=%s" %
+                      (pk, action, acc["id"], acc["name"], "OK" if vok else "FAIL:" + vnote))
+                self._send(200, {
+                    "ok": True,
+                    "status": "success",
+                    "action": action,
+                    "id": acc["id"],
+                    "name": acc["name"],
+                    "verified": vok,
+                    "verifyNote": vnote,
+                    "note": "授权成功并已" + ("更新" if action == "updated" else "添加"),
+                }); return
+            self._send(200, res); return
+        if path == "/api/auth/cancel":
+            sid = str(body.get("session_id") or "").strip()
+            AP.cancel_auth_session(sid)
+            self._send(200, {"ok": True}); return
+        if path == "/api/accounts/import":
+            pk = str(body.get("platform") or "").strip()
+            if pk not in PLATFORMS:
+                self._send(400, {"ok": False, "note": "平台不存在"}); return
+            ok, parsed = AP.parse_batch_import(pk, body.get("raw", ""))
+            if not ok:
+                self._send(400, {"ok": False, "note": parsed}); return
+            v = read_vault()
+            added, updated, errors, results = 0, 0, [], []
+            do_verify = bool(body.get("verify", False))
+            for idx, item in enumerate(parsed, 1):
+                item_name = str(item.get("name") or "").strip()
+                v_ok, v_msg = validate_account(pk, item)
+                if not v_ok:
+                    errors.append("第 %d 条（%s）：%s" % (idx, item_name or "未命名", v_msg))
+                    continue
+                _, acc, action = upsert_account(pk, item, name=item_name, dedupe=True, vault=v)
+                if action == "added":
+                    added += 1
+                else:
+                    updated += 1
+                row = {"id": acc["id"], "name": acc["name"], "action": action}
+                if do_verify:
+                    row["verified"], row["verifyNote"] = verify_account(pk, acc)
+                results.append(row)
+            if added or updated:
+                write_vault(v)
+            audit("批量导入 pk=%s added=%d updated=%d errors=%d" % (pk, added, updated, len(errors)))
+            self._send(200, {"ok": True, "added": added, "updated": updated,
+                             "errors": errors, "results": results}); return
+        if path == "/api/accounts/refresh":
+            pk, aid = body.get("platform"), body.get("id")
+            if pk not in PLATFORMS:
+                self._send(400, {"ok": False, "note": "平台不存在"}); return
+            v = read_vault()
+            acc = next((a for a in v["platforms"].get(pk, []) if a.get("id") == aid), None)
+            if not acc:
+                self._send(404, {"ok": False, "note": "账号不存在"}); return
+            ok, note = refresh_account(pk, acc)
+            self._send(200, {"ok": ok, "note": note}); return
         if path == "/api/accounts/toggle":
             pk, aid, enabled = body.get("platform"), body.get("id"), body.get("enabled")
             v = read_vault()
@@ -696,9 +930,15 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/account-schema":
             tok = self._session()
             if not tok: self._send(401, {"error": "未登录"}); return
-            # 只下发字段名/label/required/sensitive/placeholder/help，不含任何凭据值
-            self._send(200, {"platforms": {pk: {"label": PLATFORMS[pk]["label"], "fields": fields}
-                                           for pk, fields in ACCOUNT_SCHEMA.items()}})
+            # 只下发字段名/label/required/sensitive/placeholder/help 及已注册授权插件，不含任何凭据值
+            self._send(200, {"platforms": {
+                pk: {"label": PLATFORMS[pk]["label"], "fields": fields, "providers": AP.list_providers(pk)}
+                for pk, fields in ACCOUNT_SCHEMA.items()
+            }})
+        elif path == "/api/auth/providers":
+            tok = self._session()
+            if not tok: self._send(401, {"error": "未登录"}); return
+            self._send(200, {"ok": True, "providers": AP.list_providers()})
         elif path == "/api/account-detail":
             tok = self._session()
             if not tok: self._send(401, {"error": "未登录"}); return

@@ -7,9 +7,11 @@
         "id": "workbuddy_1",
         "name": "主号",
         "enabled": true,
-        "accessToken": "<从本机 WorkBuddy 导出>",
+        "accessToken": "<通过看板网页授权获取，或从本机 WorkBuddy 导出>",
+        "refreshToken": "<网页授权自动获取，用于到期自动续期>",
         "uid": "<可选>",
-        "domain": "www.workbuddy.cn"
+        "domain": "www.workbuddy.cn",
+        "apiBase": "https://copilot.tencent.com"
       }
     ],
     "trae": [

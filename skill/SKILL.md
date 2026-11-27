@@ -16,13 +16,19 @@ description: 在多平台上部署和运维一套自动签到看板（支持 Wor
 
 ## 平台与凭据来源
 
-| 平台 | 本机导出脚本 | 服务端自动续期 |
-|---|---|---|
-| WorkBuddy | `scripts/renew_workbuddy_token.bat` | ❌ 约每月手动 |
-| Trae Work | `scripts/export_creds.js` | ✅ token 刷新 |
-| Qoder | `scripts/01_extract.py` | — |
-| MiniMax Code | `scripts/renew_minimax_token.py` | ✅ 临期 refresh |
-| CodeArts | `scripts/renew_codearts_token.py` | ✅ 临期 STS refresh |
+| 平台 | 在线多账号登录 | 本机导出/同步脚本 | 服务端自动续期 |
+|---|---|---|---|
+| WorkBuddy | ✅ 看板网页 OAuth（国内+国际） | `scripts/sync_workbuddy_account.py` / `renew_workbuddy_token.bat` | ✅ `refreshToken` 自动续期 |
+| Trae Work | 批量导入 / 手动填写 | `scripts/export_creds.js` / `sync_trae_account.py` | ✅ token 刷新 |
+| Qoder | 批量导入 / 手动填写 | `scripts/01_extract.py` | ✅ 设备令牌自动续期 |
+| MiniMax Code | ✅ 看板设备码 OAuth（S256 PKCE） | `scripts/renew_minimax_token.py` | ✅ 临期 refresh |
+| CodeArts | 批量导入 / 手动填写 | `scripts/renew_codearts_token.py` | ✅ 临期 STS refresh |
+
+## 多账号注意事项（必读）
+
+- **WorkBuddy 国内/国际多账号**：直接在看板点「添加 → 授权登录」，把链接复制到**浏览器无痕窗口**登录不同账号即可，自动拿到 `refreshToken` 长期续期，无设备风控限制。
+- **Qoder 国内多账号**：`01_extract.py` 自动识别 `Qoder CN`（`com.qodercn.app.*`），看板按每个账号独立保存 `device` JSON，互不覆盖；`refreshToken` 轮换由服务端自动写回。
+- **Trae CN 单设备风控**：Trae CN 官方按 `deviceId` / `machineId` 限制**同一物理设备每日只能签 1 个号**；**严禁随机伪造 `deviceId`**（会触发 `9074` 风控）。多号需分别在不同真实电脑导出各自凭据再合入看板。
 
 ## 标准流程
 
